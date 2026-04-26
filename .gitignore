@@ -1,7 +1,39 @@
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Project runtime artifacts
 datasets/
 logs/
 history/
+results/
 *.png
 *.csv
 *.sh
+log.txt
+
+# Local experiment configs
+temp_config*.json
+temp_script*.py
