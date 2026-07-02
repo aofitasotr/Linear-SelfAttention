@@ -8,9 +8,6 @@ version = "0.1.0"
 description = "Research project for replacing BERT self-attention with linear attention variants."
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [
-  { name = "Mikhail Cherepnov" }
-]
 dependencies = [
   "torch",
   "transformers",
