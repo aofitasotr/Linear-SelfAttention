@@ -29,7 +29,6 @@ datasets/
 logs/
 history/
 results/
-*.png
 *.csv
 *.sh
 log.txt
