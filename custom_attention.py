@@ -5,7 +5,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers.modeling_outputs import SequenceClassifierOutput, BaseModelOutput
 
 from logging_utils import write_log
@@ -29,16 +28,12 @@ class LinearContextAttention(nn.Module):
         assert hidden_size % num_attention_heads == 0
 
         self.value = nn.Linear(hidden_size, hidden_size)
-        self.dense = nn.Linear(hidden_size, hidden_size)
-        self.dropout = nn.Dropout(dropout_prob)
         self._init_weights()
 
     def _init_weights(self):
-        """Инициализирует линейные слои в стиле BERT."""
+        """Инициализирует Value-проекцию в стиле BERT."""
         nn.init.normal_(self.value.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.dense.weight, mean=0.0, std=0.02)
         nn.init.zeros_(self.value.bias)
-        nn.init.zeros_(self.dense.bias)
 
     def _build_mask(self, attention_mask: torch.Tensor, batch_size: int, seq_len: int, device, dtype):
         """Приводит attention mask к форме ``(B, 1, L, 1)`` для работы с ``V``."""
@@ -68,13 +63,9 @@ class LinearContextAttention(nn.Module):
         batch_size, _, seq_len, _ = context.shape
         return context.permute(0, 2, 1, 3).reshape(batch_size, seq_len, self.hidden_size)
 
-    def _finalize_context(self, context: torch.Tensor, context_norm=None):
-        """Приводит контекст к выходному формату BERT attention-блока."""
-        context = self._reshape_context(context)
-        if context_norm is not None:
-            context = context_norm(context)
-        context = self.dense(context)
-        return self.dropout(context)
+    def _finalize_context(self, context: torch.Tensor):
+        """Объединяет головы перед стандартным ``BertSelfOutput``."""
+        return self._reshape_context(context)
 
     def _empty_attentions(self, context: torch.Tensor, seq_len: int):
         """Возвращает нулевую матрицу attention для совместимости с Hugging Face API."""
@@ -121,9 +112,6 @@ class LinearContextAttentionPosEnc(LinearContextAttention):
 
         self.max_position_embeddings = max_position_embeddings
 
-        # Нормализация после объединения голов стабилизирует выход attention-блока.
-        self.context_norm = nn.LayerNorm(hidden_size)
-
         # Синусоидальное позиционное кодирование в размерности одной головы.
         pe = torch.zeros(max_position_embeddings, self.attention_head_size)
         position = torch.arange(0, max_position_embeddings, dtype=torch.float).unsqueeze(1)
@@ -165,7 +153,7 @@ class LinearContextAttentionPosEnc(LinearContextAttention):
         context = numerator / denominator                               # (B, H, L, D)
         context = context * mask
 
-        context = self._finalize_context(context, context_norm=self.context_norm)
+        context = self._finalize_context(context)
 
         if output_attentions:
             return context, self._empty_attentions(context, seq_len)
@@ -249,7 +237,7 @@ class LinearContextAttentionDilated(LinearContextAttentionPosEnc):
         context = numerator / denominator                                            # (B, H, L, D)
         context = context * dilated_mask
 
-        context = self._finalize_context(context, context_norm=self.context_norm)
+        context = self._finalize_context(context)
 
         if output_attentions:
             return context, self._empty_attentions(context, seq_len)
@@ -354,7 +342,7 @@ class LinearContextAttentionLocalWindow(LinearContextAttentionPosEnc):
         context = numerator / denominator
         context = context * mask_expanded
 
-        context = self._finalize_context(context, context_norm=self.context_norm)
+        context = self._finalize_context(context)
 
         if output_attentions:
             return context, self._empty_attentions(context, seq_len)
@@ -407,7 +395,7 @@ class LinearContextAttentionWeighted(LinearContextAttentionPosEnc):
         context = (weighted_context - masked_values * position_weights) / denominator
         context = context * mask
 
-        context = self._finalize_context(context, context_norm=self.context_norm)
+        context = self._finalize_context(context)
 
         if output_attentions:
             return context, self._empty_attentions(context, seq_len)
@@ -457,6 +445,7 @@ class BertWithCustomAttention(nn.Module):
                  attention_class=LinearContextAttentionDilated):
         super().__init__()
         self.bert = model.bert
+        self.dropout = model.dropout
         self.classifier = model.classifier
         self.config = model.config
         self.attention_class = attention_class
@@ -574,6 +563,7 @@ class BertWithCustomAttention(nn.Module):
         """Выполняет forward классификатора и возвращает ``SequenceClassifierOutput``."""
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         pooled_output = getattr(outputs, "pooler_output", outputs.last_hidden_state[:, 0])
+        pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
 
         loss = None
